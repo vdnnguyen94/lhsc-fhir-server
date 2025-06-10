@@ -19,18 +19,18 @@ Client applications (like our `BackendFHIR` service) will interact with this ser
 
 ```mermaid
 graph TD;
-    subgraph "Client Applications"
+    subgraph Client Applications
         A[BackendFHIR Service]
         B[Other Health Apps]
     end
 
-    subgraph "This Project: LhscFhirServer"
-        C{FHIR API Endpoint <br/> e.g., /fhir/Patient/123}
-        D[FHIR Resource Provider <br/> (The "Translator")]
+    subgraph This Project LhscFhirServer
+        C{FHIR API Endpoint}
+        D[FHIR Resource Provider (The Translator)]
         E[Spring Data JPA Repository]
     end
 
-    subgraph "Internal Hospital System"
+    subgraph Internal Hospital System
         F[LHSCDB SQL Server]
     end
 
