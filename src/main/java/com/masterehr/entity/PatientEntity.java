@@ -5,6 +5,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -45,6 +46,11 @@ public class PatientEntity {
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
+
+    @Lob
+    @Column(name = "resource_json", columnDefinition = "NVARCHAR(MAX)")
+    private String resourceJson;
+
 
     // --- Getters and Setters ---
     // Spring Data JPA uses these to create instances of your entity.
@@ -128,6 +134,14 @@ public class PatientEntity {
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
     }
+    public String getResourceJson() {
+    return resourceJson;
+    }
+
+    public void setResourceJson(String resourceJson) {
+        this.resourceJson = resourceJson;
+    }
+
 
     @Override
     public String toString() {
