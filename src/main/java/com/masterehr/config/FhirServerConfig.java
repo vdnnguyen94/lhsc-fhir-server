@@ -11,22 +11,31 @@ import org.springframework.beans.factory.annotation.Autowired;
 import java.util.Arrays;
 
 /**
- * This class is a Servlet. Servlets are the standard Java way to handle web requests.
- * We are creating a HAPI FHIR RestfulServer and telling it which Resource Providers to use.
+ * This class is a Servlet that sets up the HAPI FHIR server.
+ * It now receives its configuration (like the FhirContext) via dependency injection.
  */
 @WebServlet("/fhir/*")
 public class FhirServerConfig extends RestfulServer {
 
+    private final PatientProvider patientProvider;
+    private final FhirContext fhirContext;
+
+    /**
+     * Use constructor injection to receive the beans we need from Spring.
+     * This is a robust way to ensure our servlet has access to the shared FhirContext.
+     */
     @Autowired
-    private PatientProvider patientProvider; // Spring will inject our PatientProvider bean
+    public FhirServerConfig(PatientProvider patientProvider, FhirContext fhirContext) {
+        this.patientProvider = patientProvider;
+        this.fhirContext = fhirContext;
+    }
 
     @Override
     protected void initialize() throws ServletException {
-        // Tell the server which version of FHIR to support
-        setFhirContext(FhirContext.forR4());
+        // Use the centrally-defined FhirContext bean
+        setFhirContext(fhirContext);
 
-        // Register our PatientProvider. This tells the server how to handle
-        // requests for Patient resources. We can add more providers here later.
+        // Register our PatientProvider.
         setResourceProviders(Arrays.asList(patientProvider));
 
         // Register an interceptor to add color highlighting to browser responses

@@ -14,10 +14,10 @@ For each of these resources, implement `POST` (conditional-create), `PUT` (idemp
 - **Patient** (demographics, identifiers)  COMPLETED
 - **Practitioner** / **Organization** (care providers)  
 - **Encounter** (visits)  DOABLE
-- **Condition**, **AllergyIntolerance**, **Immunization** (clinical statuses)  
+- **Condition**, **AllergyIntolerance**, **Immunization** (clinical statuses)  SKIP
 - **Observation** / **DiagnosticReport** (measurements & reports)   DOABLE
-- **MedicationRequest** / **MedicationAdministration** (orders & administrations)  
-- **Procedure** (procedures performed)
+- **MedicationRequest** / **MedicationAdministration** (orders & administrations)  SKIP
+- **Procedure** (procedures performed) DOABLE
 
 ## 3. Document Exchange
 - **Composition + DocumentReference + Binary**  

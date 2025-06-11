@@ -1,143 +1,150 @@
 package com.masterehr.provider;
 
+import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.parser.IParser;
 import ca.uhn.fhir.rest.api.MethodOutcome;
-import ca.uhn.fhir.rest.annotation.Create;
-import ca.uhn.fhir.rest.annotation.IdParam;
-import ca.uhn.fhir.rest.annotation.Read;
-import ca.uhn.fhir.rest.annotation.RequiredParam;
-import ca.uhn.fhir.rest.annotation.ResourceParam;
-import ca.uhn.fhir.rest.annotation.Search;
-import ca.uhn.fhir.rest.annotation.Update;
+import ca.uhn.fhir.rest.annotation.*;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import com.masterehr.entity.PatientEntity;
 import com.masterehr.repository.PatientRepository;
-import org.hl7.fhir.r4.model.Enumerations;
-import org.hl7.fhir.r4.model.HumanName;
-import org.hl7.fhir.r4.model.IdType;
-import org.hl7.fhir.r4.model.Patient;
+import org.hl7.fhir.r4.model.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Date;
 import java.time.ZoneId;
-import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Component
 public class PatientProvider implements IResourceProvider {
 
-    @Autowired
-    private PatientRepository patientRepository;
+    private final PatientRepository patientRepository;
+    private final FhirContext fhirContext;
 
-    /**
-     * Handles GET /Patient/[id]
-     */
-    @Read
-    public Patient getPatientById(@IdParam IdType theId) {
-        Optional<PatientEntity> patientEntityOptional = patientRepository.findById(Integer.parseInt(theId.getIdPart()));
-        if (patientEntityOptional.isPresent()) {
-            return transformToFhirPatient(patientEntityOptional.get());
-        } else {
-            throw new ResourceNotFoundException("Patient not found with ID: " + theId.getIdPart());
-        }
+    @Autowired
+    public PatientProvider(PatientRepository patientRepository, FhirContext fhirContext) {
+        this.patientRepository = patientRepository;
+        this.fhirContext = fhirContext;
     }
 
-    /**
-     * Handles GET /Patient?family=[name]
-     */
+    private static final String OHIP_SYSTEM_URL = "http://hl7.org/fhir/sid/ca-on-ohip";
+
+    @Read
+    public Patient getPatientById(@IdParam IdType theId) {
+        return patientRepository.findById(Integer.parseInt(theId.getIdPart()))
+                .map(this::transformToFhirPatient)
+                .orElseThrow(() -> new ResourceNotFoundException("Patient not found with ID: " + theId.getIdPart()));
+    }
+
     @Search
-    public List<Patient> searchPatientsByFamilyName(
-            @RequiredParam(name = Patient.SP_FAMILY) String familyName) {
-        List<PatientEntity> dbPatients = patientRepository.findByLastName(familyName);
-        return dbPatients.stream()
+    public List<Patient> searchPatientsByFamilyName(@RequiredParam(name = Patient.SP_FAMILY) String familyName) {
+        return patientRepository.findByLastName(familyName).stream()
                 .map(this::transformToFhirPatient)
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Handles POST /Patient to create a new patient.
-     * The @Transactional annotation ensures this operation is atomic.
-     */
     @Create
     @Transactional
     public MethodOutcome createPatient(@ResourceParam Patient thePatient) {
-        // Transform the incoming FHIR resource into our database entity
-        PatientEntity patientEntity = transformToPatientEntity(thePatient);
-        
-        // Set a new UID for the new patient
+        // Create a new entity and map the fields
+        PatientEntity patientEntity = transformToPatientEntity(thePatient, new PatientEntity());
         patientEntity.setPatientUid(UUID.randomUUID());
 
-        // Save the new entity to the database
+        // Save once to get the database-assigned ID
         PatientEntity savedPatient = patientRepository.save(patientEntity);
 
-        // Return a MethodOutcome which includes the new ID of the created resource
+        // Now, update the FHIR resource with the new ID before storing its JSON representation
+        thePatient.setId(savedPatient.getPatientId().toString());
+        String jsonResource = fhirContext.newJsonParser().setPrettyPrint(false).encodeResourceToString(thePatient);
+        savedPatient.setResourceJson(jsonResource);
+        
+        // Save again to store the JSON representation
+        patientRepository.save(savedPatient);
+
         MethodOutcome outcome = new MethodOutcome();
         outcome.setId(new IdType("Patient", savedPatient.getPatientId().toString()));
         outcome.setCreated(true);
-        outcome.setResource(transformToFhirPatient(savedPatient)); // Return the created resource
+        outcome.setResource(thePatient);
         return outcome;
     }
 
-    /**
-     * Handles PUT /Patient/[id] to update an existing patient.
-     */
     @Update
     @Transactional
     public MethodOutcome updatePatient(@IdParam IdType theId, @ResourceParam Patient thePatient) {
-        // First, check if a patient with this ID already exists
         return patientRepository.findById(Integer.parseInt(theId.getIdPart()))
-            .map(existingPatient -> {
-                // Patient exists, so update it
-                PatientEntity updatedEntity = transformToPatientEntity(thePatient);
-                // Important: Set the ID from the URL to ensure we update the correct record
-                updatedEntity.setPatientId(existingPatient.getPatientId());
-                updatedEntity.setPatientUid(existingPatient.getPatientUid()); // Preserve existing UID
+                .map(existingPatient -> {
+                    PatientEntity updatedEntity = transformToPatientEntity(thePatient, existingPatient);
+                    
+                    // Update the FHIR resource with the correct ID before storing the JSON
+                    thePatient.setId(theId.getIdPart());
+                    String jsonResource = fhirContext.newJsonParser().setPrettyPrint(false).encodeResourceToString(thePatient);
+                    updatedEntity.setResourceJson(jsonResource);
 
-                PatientEntity savedPatient = patientRepository.save(updatedEntity);
+                    PatientEntity savedPatient = patientRepository.save(updatedEntity);
 
-                MethodOutcome outcome = new MethodOutcome();
-                outcome.setId(new IdType("Patient", savedPatient.getPatientId().toString()));
-                outcome.setResource(transformToFhirPatient(savedPatient));
-                return outcome;
-            })
-            .orElseThrow(() -> new ResourceNotFoundException("Patient not found with ID: " + theId.getIdPart()));
+                    MethodOutcome outcome = new MethodOutcome();
+                    outcome.setId(new IdType("Patient", savedPatient.getPatientId().toString()));
+                    outcome.setResource(thePatient);
+                    return outcome;
+                })
+                .orElseThrow(() -> new ResourceNotFoundException("Patient not found with ID: " + theId.getIdPart()));
     }
 
     /**
      * Transforms our internal database entity into the standard FHIR Patient resource.
+     * This method is now robust and handles both old and new data.
      */
     private Patient transformToFhirPatient(PatientEntity entity) {
+        // If we have a stored JSON representation, use it for efficiency.
+        if (entity.getResourceJson() != null && !entity.getResourceJson().isEmpty()) {
+            IParser parser = fhirContext.newJsonParser();
+            return parser.parseResource(Patient.class, entity.getResourceJson());
+        }
+
+        // Fallback for old data: Manually transform the fields if resource_json is null.
         Patient fhirPatient = new Patient();
         fhirPatient.setId(entity.getPatientId().toString());
-        if (entity.getFirstName() != null || entity.getLastName() != null) {
-            HumanName name = new HumanName();
-            name.setFamily(entity.getLastName());
-            name.setGiven(Collections.singletonList(new org.hl7.fhir.r4.model.StringType(entity.getFirstName())));
-            fhirPatient.setName(Collections.singletonList(name));
+
+        if (entity.getOhipNumber() != null) {
+            fhirPatient.addIdentifier()
+                .setSystem(OHIP_SYSTEM_URL)
+                .setValue(entity.getOhipNumber());
         }
+
+        if (entity.getFirstName() != null || entity.getLastName() != null) {
+            HumanName name = fhirPatient.addName();
+            name.setFamily(entity.getLastName());
+            name.addGiven(entity.getFirstName());
+        }
+
         if (entity.getDob() != null) {
             fhirPatient.setBirthDate(Date.valueOf(entity.getDob()));
         }
+
         if (entity.getGender() != null) {
-            switch (entity.getGender().toLowerCase()) {
-                case "male": fhirPatient.setGender(Enumerations.AdministrativeGender.MALE); break;
-                case "female": fhirPatient.setGender(Enumerations.AdministrativeGender.FEMALE); break;
-                default: fhirPatient.setGender(Enumerations.AdministrativeGender.UNKNOWN); break;
-            }
+            fhirPatient.setGender(Enumerations.AdministrativeGender.fromCode(entity.getGender().toLowerCase()));
         }
+        
         return fhirPatient;
     }
 
     /**
      * Transforms an incoming FHIR Patient resource into our internal database entity for saving.
      */
-    private PatientEntity transformToPatientEntity(Patient fhirPatient) {
-        PatientEntity entity = new PatientEntity();
+    private PatientEntity transformToPatientEntity(Patient fhirPatient, PatientEntity existingEntity) {
+        // Use the existing entity if provided (for updates), otherwise create a new one.
+        PatientEntity entity = (existingEntity != null) ? existingEntity : new PatientEntity();
+
+        if (fhirPatient.hasIdentifier()) {
+            fhirPatient.getIdentifier().stream()
+                    .filter(i -> OHIP_SYSTEM_URL.equals(i.getSystem()))
+                    .findFirst()
+                    .ifPresent(identifier -> entity.setOhipNumber(identifier.getValue()));
+        }
 
         if (fhirPatient.hasName()) {
             HumanName name = fhirPatient.getNameFirstRep();
@@ -146,17 +153,12 @@ public class PatientProvider implements IResourceProvider {
         }
 
         if (fhirPatient.hasBirthDate()) {
-            // Convert java.util.Date to java.time.LocalDate
             entity.setDob(fhirPatient.getBirthDate().toInstant().atZone(ZoneId.systemDefault()).toLocalDate());
         }
-
+        
         if (fhirPatient.hasGender()) {
             entity.setGender(fhirPatient.getGender().toCode());
         }
-        
-        // In a real application, you would map other fields like OHIP number, address, etc.
-        // For now, we'll set a placeholder for the required ohipNumber field.
-        entity.setOhipNumber("0000000000");
 
         return entity;
     }
