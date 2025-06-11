@@ -2,6 +2,8 @@ package com.masterehr.provider;
 
 import ca.uhn.fhir.rest.annotation.IdParam;
 import ca.uhn.fhir.rest.annotation.Read;
+import ca.uhn.fhir.rest.annotation.RequiredParam; // New Import
+import ca.uhn.fhir.rest.annotation.Search;       // New Import
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import com.masterehr.entity.PatientEntity;
@@ -15,7 +17,9 @@ import org.springframework.stereotype.Component;
 
 import java.sql.Date;
 import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Component
 public class PatientProvider implements IResourceProvider {
@@ -24,48 +28,55 @@ public class PatientProvider implements IResourceProvider {
     private PatientRepository patientRepository;
 
     /**
-     * This method handles the "read" operation (e.g., GET /Patient/1).
-     * The @Read annotation tells HAPI FHIR that this method handles fetching a single resource by its ID.
+     * This is the "read" operation, which handles requests like GET /Patient/1
      */
     @Read
     public Patient getPatientById(@IdParam IdType theId) {
-        // Step 1: Query the SQL database using our repository.
+        // ... (this existing method is unchanged)
         Optional<PatientEntity> patientEntityOptional = patientRepository.findById(Integer.parseInt(theId.getIdPart()));
-
         if (patientEntityOptional.isPresent()) {
-            // Step 2: If the patient is found, transform the database entity into a FHIR resource.
-            PatientEntity dbPatient = patientEntityOptional.get();
-            return transformToFhirPatient(dbPatient);
+            return transformToFhirPatient(patientEntityOptional.get());
         } else {
-            // Step 3: If not found, throw a specific FHIR exception that results in a 404 Not Found response.
             throw new ResourceNotFoundException("Patient not found with ID: " + theId.getIdPart());
         }
     }
 
     /**
+     * This is the "search" operation, which handles requests like GET /Patient?family=Smith
+     * The @Search annotation tells HAPI FHIR this method handles search queries.
+     */
+    @Search
+    public List<Patient> searchPatientsByFamilyName(
+            @RequiredParam(name = Patient.SP_FAMILY) String familyName) {
+        
+        // Step 1: Use our new repository method to find patients in the database
+        List<PatientEntity> dbPatients = patientRepository.findByLastName(familyName);
+
+        // Step 2: Transform the list of database entities into a list of FHIR resources
+        List<Patient> fhirPatients = dbPatients.stream()
+                .map(this::transformToFhirPatient) // Reuse our existing transformation logic
+                .collect(Collectors.toList());
+        
+        return fhirPatients;
+    }
+
+
+    /**
      * This private helper method transforms our internal database entity into the standard FHIR Patient resource.
-     * This is the core "translation" logic.
      */
     private Patient transformToFhirPatient(PatientEntity entity) {
+        // ... (this existing method is unchanged)
         Patient fhirPatient = new Patient();
-
-        // Map the database ID to the FHIR resource ID
         fhirPatient.setId(entity.getPatientId().toString());
-
-        // Map the name fields
         if (entity.getFirstName() != null || entity.getLastName() != null) {
             HumanName name = new HumanName();
             name.setFamily(entity.getLastName());
             name.setGiven(Collections.singletonList(new org.hl7.fhir.r4.model.StringType(entity.getFirstName())));
             fhirPatient.setName(Collections.singletonList(name));
         }
-
-        // Map the date of birth
         if (entity.getDob() != null) {
             fhirPatient.setBirthDate(Date.valueOf(entity.getDob()));
         }
-
-        // Map the gender
         if (entity.getGender() != null) {
             switch (entity.getGender().toLowerCase()) {
                 case "male":
@@ -79,9 +90,6 @@ public class PatientProvider implements IResourceProvider {
                     break;
             }
         }
-        
-        // We can map other fields here later (e.g., address, phone number).
-
         return fhirPatient;
     }
 
